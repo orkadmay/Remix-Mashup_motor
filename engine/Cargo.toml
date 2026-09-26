@@ -1,0 +1,24 @@
+[package]
+name = "mashup-engine"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "mashup_engine"
+path = "src/lib.rs"
+
+[[bin]]
+name = "gen_test"
+path = "src/bin/gen_test.rs"
+
+[[bin]]
+name = "mashup_cli"
+path = "src/bin/mashup_cli.rs"
+
+[dependencies]
+symphonia = { version = "0.5", features = ["mp3", "wav", "flac", "ogg", "vorbis"] }
+hound = "3.5"
+rustfft = "6.2"
+
+[profile.release]
+opt-level = 3

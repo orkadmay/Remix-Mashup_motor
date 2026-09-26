@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="ro">
+<head>
+<meta charset="utf-8" />
+<title>Motor Mashup</title>
+<style>
+  :root {
+    --bg: #14141e;
+    --panel: #1e1e2c;
+    --accent: #ff54b4;
+    --accent2: #54c8ff;
+    --text: #eee;
+    --muted: #9a9ab0;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI", system-ui, sans-serif;
+    padding: 24px;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p.sub { color: var(--muted); margin: 0 0 24px; font-size: 13px; }
+  .tracks { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .track-card {
+    background: var(--panel);
+    border-radius: 10px;
+    padding: 16px;
+    border: 1px solid #2c2c3d;
+  }
+  .track-card h2 { font-size: 14px; margin: 0 0 10px; color: var(--accent2); }
+  button {
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    border: none;
+    color: #14141e;
+    font-weight: 600;
+    padding: 8px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.secondary {
+    background: none;
+    border: 1px solid #3a3a50;
+    color: var(--text);
+  }
+  .path { font-size: 11px; color: var(--muted); word-break: break-all; margin: 6px 0; min-height: 14px; }
+  canvas.waveform {
+    width: 100%;
+    height: 70px;
+    background: #0e0e16;
+    border-radius: 6px;
+    margin: 8px 0;
+  }
+  .bpm-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 13px; }
+  .bpm-row input {
+    width: 70px;
+    background: #0e0e16;
+    border: 1px solid #3a3a50;
+    color: var(--text);
+    border-radius: 4px;
+    padding: 4px 6px;
+  }
+  .controls {
+    margin-top: 20px;
+    background: var(--panel);
+    border-radius: 10px;
+    padding: 16px;
+    border: 1px solid #2c2c3d;
+  }
+  .controls-row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; font-size: 13px; }
+  select, input[type=number] {
+    background: #0e0e16;
+    border: 1px solid #3a3a50;
+    color: var(--text);
+    border-radius: 4px;
+    padding: 5px 8px;
+  }
+  .result { margin-top: 16px; font-size: 13px; }
+  .status { margin-top: 10px; font-size: 12px; color: var(--muted); min-height: 16px; }
+  .status.error { color: #ff6b6b; }
+  audio { width: 100%; margin-top: 8px; }
+</style>
+</head>
+<body>
+  <h1>Motor Mashup</h1>
+  <p class="sub">Incarca doua piese, aliniaza BPM-ul intre ele si amesteca-le.</p>
+
+  <div class="tracks">
+    <div class="track-card">
+      <h2>Piesa A</h2>
+      <button id="pickA">Alege fisier...</button>
+      <div class="path" id="pathA"></div>
+      <canvas class="waveform" id="waveA"></canvas>
+      <div class="bpm-row">
+        BPM detectat: <input type="number" id="bpmA" step="0.1" />
+        <span id="durA" style="color:var(--muted)"></span>
+      </div>
+    </div>
+    <div class="track-card">
+      <h2>Piesa B</h2>
+      <button id="pickB">Alege fisier...</button>
+      <div class="path" id="pathB"></div>
+      <canvas class="waveform" id="waveB"></canvas>
+      <div class="bpm-row">
+        BPM detectat: <input type="number" id="bpmB" step="0.1" />
+        <span id="durB" style="color:var(--muted)"></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <div class="controls-row">
+      <label>Mod:
+        <select id="mode">
+          <option value="overlay">Suprapunere (ambele cânta simultan)</option>
+          <option value="crossfade">Crossfade (trecere de la A la B)</option>
+        </select>
+      </label>
+      <label>BPM tinta:
+        <input type="number" id="targetBpm" step="0.1" style="width:80px" placeholder="= BPM A" />
+      </label>
+      <span id="fadeWrap" style="display:none">
+        Durata fade (s): <input type="number" id="fadeSecs" value="4" step="0.5" style="width:60px" />
+      </span>
+      <span id="gainWrap">
+        Volum A: <input type="number" id="gainA" value="0.7" step="0.05" style="width:60px" />
+        Volum B: <input type="number" id="gainB" value="0.7" step="0.05" style="width:60px" />
+      </span>
+    </div>
+    <button id="runMashup" disabled>Aliniaza si amesteca</button>
+    <div class="status" id="status"></div>
+    <div class="result" id="result" style="display:none">
+      <div>BPM final: <b id="resBpm"></b> &middot; Durata: <b id="resDur"></b>s</div>
+      <canvas class="waveform" id="waveOut"></canvas>
+      <audio id="player" controls></audio>
+      <div class="path" id="outPath"></div>
+    </div>
+  </div>
+
+<script>
+const { invoke } = window.__TAURI__.tauri;
+const { open } = window.__TAURI__.dialog;
+const { convertFileSrc } = window.__TAURI__.tauri;
+
+let trackA = null; // { path, bpm, duration_secs, waveform }
+let trackB = null;
+
+function drawWave(canvas, peaks) {
+  const ctx = canvas.getContext('2d');
+  const w = canvas.clientWidth || 500;
+  const h = canvas.clientHeight || 70;
+  canvas.width = w; canvas.height = h;
+  ctx.clearRect(0, 0, w, h);
+  if (!peaks || peaks.length === 0) return;
+  ctx.strokeStyle = '#54c8ff';
+  ctx.lineWidth = 1;
+  const mid = h / 2;
+  const step = w / peaks.length;
+  ctx.beginPath();
+  for (let i = 0; i < peaks.length; i++) {
+    const amp = Math.min(1, peaks[i]) * mid * 0.95;
+    const x = i * step;
+    ctx.moveTo(x, mid - amp);
+    ctx.lineTo(x, mid + amp);
+  }
+  ctx.stroke();
+}
+
+function setStatus(msg, isError) {
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.className = 'status' + (isError ? ' error' : '');
+}
+
+function maybeEnableRun() {
+  document.getElementById('runMashup').disabled = !(trackA && trackB);
+}
+
+async function pickAndAnalyze(which) {
+  try {
+    const selected = await open({
+      multiple: false,
+      filters: [{ name: 'Audio', extensions: ['mp3', 'wav', 'flac', 'ogg', 'm4a'] }],
+    });
+    if (!selected) return;
+    setStatus('Analizez ' + selected + ' ...');
+    const info = await invoke('analyze_track', { path: selected });
+    const data = { path: selected, ...info };
+    if (which === 'A') {
+      trackA = data;
+      document.getElementById('pathA').textContent = selected;
+      document.getElementById('bpmA').value = info.bpm.toFixed(1);
+      document.getElementById('durA').textContent = info.duration_secs.toFixed(1) + 's';
+      drawWave(document.getElementById('waveA'), info.waveform);
+    } else {
+      trackB = data;
+      document.getElementById('pathB').textContent = selected;
+      document.getElementById('bpmB').value = info.bpm.toFixed(1);
+      document.getElementById('durB').textContent = info.duration_secs.toFixed(1) + 's';
+      drawWave(document.getElementById('waveB'), info.waveform);
+    }
+    setStatus('Gata.');
+    maybeEnableRun();
+  } catch (e) {
+    setStatus('Eroare: ' + e, true);
+  }
+}
+
+document.getElementById('pickA').addEventListener('click', () => pickAndAnalyze('A'));
+document.getElementById('pickB').addEventListener('click', () => pickAndAnalyze('B'));
+
+document.getElementById('mode').addEventListener('change', (e) => {
+  document.getElementById('fadeWrap').style.display = e.target.value === 'crossfade' ? 'inline' : 'none';
+  document.getElementById('gainWrap').style.display = e.target.value === 'overlay' ? 'inline' : 'none';
+});
+
+document.getElementById('runMashup').addEventListener('click', async () => {
+  if (!trackA || !trackB) return;
+  const mode = document.getElementById('mode').value;
+  const bpmA = parseFloat(document.getElementById('bpmA').value) || null;
+  const bpmB = parseFloat(document.getElementById('bpmB').value) || null;
+  const targetRaw = document.getElementById('targetBpm').value;
+  const target = targetRaw ? parseFloat(targetRaw) : null;
+  const gainA = parseFloat(document.getElementById('gainA').value) || 0.7;
+  const gainB = parseFloat(document.getElementById('gainB').value) || 0.7;
+  const fadeSecs = parseFloat(document.getElementById('fadeSecs').value) || 4.0;
+
+  setStatus('Amestec in curs...');
+  document.getElementById('runMashup').disabled = true;
+  try {
+    const res = await invoke('mashup_tracks', {
+      pathA: trackA.path,
+      pathB: trackB.path,
+      bpmAOverride: bpmA,
+      bpmBOverride: bpmB,
+      targetBpm: target,
+      mode,
+      gainA, gainB,
+      fadeSecs,
+    });
+    document.getElementById('result').style.display = 'block';
+    document.getElementById('resBpm').textContent = res.bpm_final.toFixed(1);
+    document.getElementById('resDur').textContent = res.duration_secs.toFixed(1);
+    document.getElementById('outPath').textContent = res.out_path;
+    drawWave(document.getElementById('waveOut'), res.waveform);
+    const player = document.getElementById('player');
+    player.src = convertFileSrc(res.out_path);
+    setStatus('Gata — fisier scris la: ' + res.out_path);
+  } catch (e) {
+    setStatus('Eroare: ' + e, true);
+  } finally {
+    document.getElementById('runMashup').disabled = false;
+  }
+});
+</script>
+</body>
+</html>

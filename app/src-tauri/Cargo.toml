@@ -1,0 +1,17 @@
+[package]
+name = "mashup-app"
+version = "0.1.0"
+description = "Motor de remix/mashup - aliniere BPM si suprapunere intre doua piese"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "1", features = [] }
+
+[dependencies]
+tauri = { version = "1", features = [ "shell-open", "dialog-open", "fs-read-file", "fs-write-file", "path-all"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+mashup-engine = { path = "../../engine" }
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]
