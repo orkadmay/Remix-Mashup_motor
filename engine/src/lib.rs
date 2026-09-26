@@ -337,3 +337,357 @@ pub fn crossfade(a: &AudioBuffer, b: &AudioBuffer, fade_secs: f32) -> AudioBuffe
 
     AudioBuffer { samples: out, sample_rate: sr }
 }
+
+/// Extrage o bucata [start_secs, end_secs) dintr-un buffer.
+pub fn extract_segment(buf: &AudioBuffer, start_secs: f32, end_secs: f32) -> AudioBuffer {
+    let sr = buf.sample_rate as f32;
+    let start = ((start_secs.max(0.0)) * sr) as usize;
+    let end = ((end_secs.max(start_secs)) * sr) as usize;
+    let start = start.min(buf.samples.len());
+    let end = end.min(buf.samples.len()).max(start);
+    AudioBuffer { samples: buf.samples[start..end].to_vec(), sample_rate: buf.sample_rate }
+}
+
+/// Lipeste mai multe bucati la rand, cu un scurt crossfade la fiecare imbinare (evita pocniturile).
+/// Daca o bucata e mai scurta decat `seam_crossfade_secs`, se foloseste jumatate din lungimea ei.
+pub fn splice_segments(segments: &[AudioBuffer], seam_crossfade_secs: f32) -> AudioBuffer {
+    if segments.is_empty() {
+        return AudioBuffer { samples: Vec::new(), sample_rate: 44100 };
+    }
+    let sr = segments[0].sample_rate;
+    let mut acc = segments[0].clone();
+    for seg in &segments[1..] {
+        let max_fade = (acc.duration_secs().min(seg.duration_secs()) / 2.0).max(0.005);
+        let fade = seam_crossfade_secs.min(max_fade);
+        acc = crossfade(&acc, seg, fade);
+    }
+    AudioBuffer { samples: acc.samples, sample_rate: sr }
+}
+
+/// Ecou/delay clasic: repeta semnalul cu intarziere si atenuare (feedback), amestecat cu originalul.
+pub fn echo(buf: &AudioBuffer, delay_secs: f32, feedback: f32, mix: f32) -> AudioBuffer {
+    let sr = buf.sample_rate as f32;
+    let delay_samples = ((delay_secs.max(0.01)) * sr) as usize;
+    let feedback = feedback.clamp(0.0, 0.95);
+    let mix = mix.clamp(0.0, 1.0);
+
+    let mut out = buf.samples.clone();
+    let extra = delay_samples * 6; // coada suficienta pt. cateva repetitii care se sting
+    out.resize(out.len() + extra, 0.0);
+
+    let mut delay_line = vec![0.0f32; out.len()];
+    for i in 0..buf.samples.len() {
+        let d_idx = i + delay_samples;
+        if d_idx < delay_line.len() {
+            delay_line[d_idx] += buf.samples[i];
+        }
+    }
+    // propagam ecourile succesive (feedback) inainte in linia de intarziere
+    let mut i = 0;
+    while i < delay_line.len() {
+        let val = delay_line[i];
+        if val.abs() > 1e-6 {
+            let d_idx = i + delay_samples;
+            if d_idx < delay_line.len() {
+                delay_line[d_idx] += val * feedback;
+            }
+        }
+        i += 1;
+    }
+
+    for i in 0..out.len() {
+        let dry = if i < buf.samples.len() { buf.samples[i] } else { 0.0 };
+        let wet = delay_line[i];
+        out[i] = dry * (1.0 - mix) + (dry + wet) * mix;
+    }
+
+    AudioBuffer { samples: out, sample_rate: buf.sample_rate }
+}
+
+/// Stutter/repetitie: taie semnalul in bucati de `chunk_secs` si repeta fiecare bucata de `repeats` ori.
+/// Efect clasic de "glitch"/build-up folosit in muzica electronica.
+pub fn stutter(buf: &AudioBuffer, chunk_secs: f32, repeats: usize) -> AudioBuffer {
+    let sr = buf.sample_rate as f32;
+    let chunk_len = ((chunk_secs.max(0.02)) * sr) as usize;
+    let repeats = repeats.max(1);
+    if chunk_len == 0 || buf.samples.is_empty() {
+        return buf.clone();
+    }
+    let mut out = Vec::with_capacity(buf.samples.len() * repeats);
+    for chunk in buf.samples.chunks(chunk_len) {
+        for _ in 0..repeats {
+            out.extend_from_slice(chunk);
+        }
+    }
+    AudioBuffer { samples: out, sample_rate: buf.sample_rate }
+}
+
+/// Filtru trece-jos, simplu (un pol IIR) - atenueaza frecventele inalte peste `cutoff_hz`.
+pub fn lowpass(buf: &AudioBuffer, cutoff_hz: f32) -> AudioBuffer {
+    let sr = buf.sample_rate as f32;
+    let rc = 1.0 / (2.0 * std::f32::consts::PI * cutoff_hz.max(20.0));
+    let dt = 1.0 / sr;
+    let alpha = dt / (rc + dt);
+    let mut out = vec![0.0f32; buf.samples.len()];
+    let mut prev = 0.0f32;
+    for (i, &s) in buf.samples.iter().enumerate() {
+        prev += alpha * (s - prev);
+        out[i] = prev;
+    }
+    AudioBuffer { samples: out, sample_rate: buf.sample_rate }
+}
+
+/// Filtru trece-sus, simplu (un pol IIR) - atenueaza frecventele joase sub `cutoff_hz`.
+pub fn highpass(buf: &AudioBuffer, cutoff_hz: f32) -> AudioBuffer {
+    let sr = buf.sample_rate as f32;
+    let rc = 1.0 / (2.0 * std::f32::consts::PI * cutoff_hz.max(20.0));
+    let dt = 1.0 / sr;
+    let alpha = rc / (rc + dt);
+    let mut out = vec![0.0f32; buf.samples.len()];
+    let mut prev_in = 0.0f32;
+    let mut prev_out = 0.0f32;
+    for (i, &s) in buf.samples.iter().enumerate() {
+        let val = alpha * (prev_out + s - prev_in);
+        out[i] = val;
+        prev_in = s;
+        prev_out = val;
+    }
+    AudioBuffer { samples: out, sample_rate: buf.sample_rate }
+}
+
+/// Distorsiune blanda (soft clipping cu tanh) - adauga "grit".
+pub fn distortion(buf: &AudioBuffer, drive: f32) -> AudioBuffer {
+    let drive = drive.max(1.0);
+    let norm = drive.tanh();
+    let out: Vec<f32> = buf.samples.iter().map(|&s| (s * drive).tanh() / norm).collect();
+    AudioBuffer { samples: out, sample_rate: buf.sample_rate }
+}
+
+/// "Sidechain pump": pulsatie ritmica de volum sincronizata pe BPM (ca un sidechain-compressor clasic de techno/house).
+/// La fiecare timp (60/bpm secunde), volumul scade brusc si urca lin inapoi.
+pub fn sidechain_pump(buf: &AudioBuffer, bpm: f32, depth: f32, subdivision: f32) -> AudioBuffer {
+    if bpm <= 0.0 {
+        return buf.clone();
+    }
+    let sr = buf.sample_rate as f32;
+    let depth = depth.clamp(0.0, 0.95);
+    let beat_secs = (60.0 / bpm) * subdivision.max(0.1);
+    let period_samples = (beat_secs * sr).max(1.0);
+    let out: Vec<f32> = buf.samples.iter().enumerate().map(|(i, &s)| {
+        let phase = (i as f32 % period_samples) / period_samples; // 0..1 in cadrul unui timp
+        // scade brusc la inceputul timpului, revine exponential
+        let gain = 1.0 - depth * (-phase * 8.0).exp();
+        s * gain
+    }).collect();
+    AudioBuffer { samples: out, sample_rate: buf.sample_rate }
+}
+
+/// Un stil predefinit de remix: combina filtre + ecou + pompare, ca o "aroma" rapida de gen.
+/// Nu e transformare completa de gen (ar necesita separare de instrumente), ci un lant de efecte
+/// caracteristic stilului respectiv.
+pub fn apply_style(buf: &AudioBuffer, style: &str, bpm: f32) -> AudioBuffer {
+    match style {
+        "techno" => {
+            let b = lowpass(buf, 9000.0);
+            let b = distortion(&b, 1.6);
+            sidechain_pump(&b, bpm, 0.55, 1.0)
+        }
+        "trance" => {
+            let b = highpass(buf, 120.0);
+            let beat = if bpm > 0.0 { 60.0 / bpm / 2.0 } else { 0.25 };
+            let b = echo(&b, beat, 0.35, 0.22);
+            sidechain_pump(&b, bpm, 0.4, 1.0)
+        }
+        "ethno" => {
+            let b = lowpass(buf, 6000.0);
+            echo(&b, 0.35, 0.5, 0.3)
+        }
+        "tribal" => {
+            let b = distortion(buf, 1.3);
+            let b = sidechain_pump(&b, bpm, 0.5, 0.5);
+            echo(&b, 0.18, 0.3, 0.18)
+        }
+        "house" => {
+            let b = lowpass(buf, 10000.0);
+            sidechain_pump(&b, bpm, 0.45, 1.0)
+        }
+        "deep-house" => {
+            let b = lowpass(buf, 5000.0);
+            let b = sidechain_pump(&b, bpm, 0.35, 1.0);
+            echo(&b, 0.3, 0.25, 0.15)
+        }
+        "dub" => {
+            let b = lowpass(buf, 4000.0);
+            let beat = if bpm > 0.0 { 60.0 / bpm } else { 0.5 };
+            echo(&b, beat, 0.55, 0.4)
+        }
+        "lofi" => {
+            let b = lowpass(buf, 3500.0);
+            let b = distortion(&b, 1.15);
+            highpass(&b, 80.0)
+        }
+        "ambient" => {
+            let b = lowpass(buf, 7000.0);
+            echo(&b, 0.6, 0.6, 0.35)
+        }
+        "chill" => {
+            let b = lowpass(buf, 6500.0);
+            echo(&b, 0.4, 0.3, 0.2)
+        }
+        "hardstyle" => {
+            let b = distortion(buf, 2.2);
+            sidechain_pump(&b, bpm, 0.7, 1.0)
+        }
+        "industrial" => {
+            let b = distortion(buf, 2.5);
+            let b = lowpass(&b, 8000.0);
+            sidechain_pump(&b, bpm, 0.5, 0.5)
+        }
+        "psytrance" => {
+            let b = highpass(buf, 150.0);
+            let beat = if bpm > 0.0 { 60.0 / bpm / 4.0 } else { 0.15 };
+            let b = echo(&b, beat, 0.4, 0.28);
+            sidechain_pump(&b, bpm, 0.5, 1.0)
+        }
+        "acid" => {
+            let b = highpass(buf, 200.0);
+            let b = distortion(&b, 1.8);
+            sidechain_pump(&b, bpm, 0.4, 1.0)
+        }
+        "trap" => {
+            let b = distortion(buf, 1.7);
+            sidechain_pump(&b, bpm, 0.65, 2.0)
+        }
+        "drum-n-bass" => {
+            let b = stutter(buf, 0.08, 2);
+            let b = distortion(&b, 1.4);
+            highpass(&b, 100.0)
+        }
+        "gabber" => {
+            let b = distortion(buf, 3.5);
+            sidechain_pump(&b, bpm, 0.8, 1.0)
+        }
+        _ => buf.clone(),
+    }
+}
+
+/// Lista de stiluri disponibile, pt. afisare in interfata (nume + eticheta prietenoasa).
+pub fn style_list() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("techno", "Techno"),
+        ("trance", "Trance"),
+        ("ethno", "Ethno"),
+        ("tribal", "Tribal"),
+        ("house", "House"),
+        ("deep-house", "Deep House"),
+        ("dub", "Dub"),
+        ("lofi", "Lo-fi"),
+        ("ambient", "Ambient"),
+        ("chill", "Chill"),
+        ("hardstyle", "Hardstyle"),
+        ("industrial", "Industrial"),
+        ("psytrance", "Psytrance"),
+        ("acid", "Acid"),
+        ("trap", "Trap"),
+        ("drum-n-bass", "Drum & Bass"),
+        ("gabber", "Gabber"),
+    ]
+}
+
+/// Aplica mai multe stiluri, in lant, in ordinea data (fiecare stil se aplica peste rezultatul precedent).
+pub fn apply_style_chain(buf: &AudioBuffer, styles: &[String], bpm: f32) -> AudioBuffer {
+    let mut out = buf.clone();
+    for s in styles {
+        out = apply_style(&out, s, bpm);
+    }
+    out
+}
+
+/// Recunoastere simpla de cuvinte cheie intr-o descriere scrisa de utilizator (nu e intelegere
+/// completa de limbaj, doar potrivire de cuvinte des folosite, in romana si engleza) - traduce
+/// descrierea in efecte DSP concrete.
+pub fn apply_custom_description(buf: &AudioBuffer, text: &str, bpm: f32) -> AudioBuffer {
+    let t = text.to_lowercase();
+    let mut out = buf.clone();
+
+    let has_any = |words: &[&str]| words.iter().any(|w| t.contains(w));
+
+    if has_any(&["ecou", "echo", "reverb"]) {
+        out = echo(&out, 0.3, 0.45, 0.3);
+    }
+    if has_any(&["bas greu", "bas gros", "heavy bass", "greu", "gros", "dark", "intunecat"]) {
+        out = lowpass(&out, 3500.0);
+        out = distortion(&out, 1.6);
+    }
+    if has_any(&["vesel", "luminos", "bright", "clar"]) {
+        out = highpass(&out, 200.0);
+    }
+    if has_any(&["rapid", "fast", "energic", "energetic"]) {
+        out = sidechain_pump(&out, bpm, 0.6, 0.5);
+    }
+    if has_any(&["lent", "slow", "calm", "relaxat"]) {
+        out = echo(&out, 0.5, 0.4, 0.25);
+    }
+    if has_any(&["distorsiune", "distortion", "murdar", "gritty", "crunchy"]) {
+        out = distortion(&out, 2.0);
+    }
+    if has_any(&["glitch", "stutter", "repetitiv", "bâlbâit", "balbait"]) {
+        out = stutter(&out, 0.15, 2);
+    }
+    if has_any(&["pompare", "pump", "sidechain", "puls"]) {
+        out = sidechain_pump(&out, bpm, 0.5, 1.0);
+    }
+
+    out
+}
+
+/// Un interval (inceput, sfarsit), in secunde, dintr-o piesa.
+pub type TimeRange = (f32, f32);
+
+/// Imparte o piesa in fraze consecutive de `phrase_beats` timpi (la BPM-ul dat), acoperind toata piesa.
+/// Ultima fraza poate fi mai scurta daca durata nu se imparte exact.
+pub fn auto_segments(buf: &AudioBuffer, bpm: f32, phrase_beats: f32) -> Vec<TimeRange> {
+    if bpm <= 0.0 {
+        return vec![(0.0, buf.duration_secs())];
+    }
+    let phrase_secs = (60.0 / bpm) * phrase_beats.max(1.0);
+    let total = buf.duration_secs();
+    let mut out = Vec::new();
+    let mut t = 0.0f32;
+    while t < total {
+        let end = (t + phrase_secs).min(total);
+        if end - t > 0.2 {
+            out.push((t, end));
+        }
+        t += phrase_secs;
+    }
+    if out.is_empty() {
+        out.push((0.0, total));
+    }
+    out
+}
+
+/// Energia (RMS) a unei bucati dintr-o piesa - folosita ca sa alegem automat cele mai "pline"/energice
+/// portiuni ale unei piese, fara interventie manuala.
+pub fn segment_rms(buf: &AudioBuffer, range: TimeRange) -> f32 {
+    let seg = extract_segment(buf, range.0, range.1);
+    if seg.samples.is_empty() {
+        return 0.0;
+    }
+    let sum_sq: f32 = seg.samples.iter().map(|x| x * x).sum();
+    (sum_sq / seg.samples.len() as f32).sqrt()
+}
+
+/// Siguranta finala inainte de export: daca varful de volum depaseste `target_peak` (ex. dupa ecouri
+/// cu feedback mare, care se pot aduna peste semnalul original), scade tot semnalul proportional,
+/// pastrand forma/dinamica - nu mai lasa taierea dura (clipping) sa se intample la scriere in fisier.
+pub fn normalize_peak(buf: &AudioBuffer, target_peak: f32) -> AudioBuffer {
+    let peak = buf.samples.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
+    if peak <= target_peak || peak < 1e-6 {
+        return buf.clone();
+    }
+    let scale = target_peak / peak;
+    let samples = buf.samples.iter().map(|x| x * scale).collect();
+    AudioBuffer { samples, sample_rate: buf.sample_rate }
+}
+

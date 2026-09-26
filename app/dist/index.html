@@ -5,163 +5,487 @@
 <title>Motor Mashup</title>
 <style>
   :root {
-    --bg: #14141e;
-    --panel: #1e1e2c;
-    --accent: #ff54b4;
-    --accent2: #54c8ff;
-    --text: #eee;
-    --muted: #9a9ab0;
+    --bg: #0a0b0f;
+    --panel: #13151c;
+    --panel-2: #1a1d27;
+    --line: #262a38;
+    --accent: #ff2f7e;
+    --accent-2: #23d3c5;
+    --accent-3: #ffd23f;
+    --text: #eef0f5;
+    --muted: #7a8098;
+    --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    --sans: -apple-system, "Segoe UI", Inter, system-ui, sans-serif;
   }
   * { box-sizing: border-box; }
+  html, body { height: 100%; }
   body {
     margin: 0;
     background: var(--bg);
     color: var(--text);
-    font-family: "Segoe UI", system-ui, sans-serif;
-    padding: 24px;
+    font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
   }
-  h1 { font-size: 20px; margin: 0 0 4px; }
-  p.sub { color: var(--muted); margin: 0 0 24px; font-size: 13px; }
-  .tracks { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-  .track-card {
-    background: var(--panel);
-    border-radius: 10px;
-    padding: 16px;
-    border: 1px solid #2c2c3d;
+
+  .shell { max-width: 1180px; margin: 0 auto; padding: 24px 32px 48px; }
+
+  header.top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--line);
   }
-  .track-card h2 { font-size: 14px; margin: 0 0 10px; color: var(--accent2); }
-  button {
-    background: linear-gradient(135deg, var(--accent), var(--accent2));
-    border: none;
-    color: #14141e;
+  header.top .brand { display: flex; align-items: baseline; gap: 12px; }
+  header.top h1 { font-size: 19px; font-weight: 700; letter-spacing: -0.01em; margin: 0; }
+  .mark {
+    width: 22px; height: 22px; border-radius: 5px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    flex-shrink: 0;
+  }
+
+  nav.tabs { display: flex; gap: 4px; }
+  nav.tabs button {
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 12.5px;
     font-weight: 600;
-    padding: 8px 14px;
+    padding: 7px 14px;
     border-radius: 6px;
     cursor: pointer;
-    font-size: 13px;
   }
-  button:disabled { opacity: 0.4; cursor: not-allowed; }
-  button.secondary {
-    background: none;
-    border: 1px solid #3a3a50;
+  nav.tabs button.active { color: var(--text); border-color: var(--accent); background: rgba(255,47,126,0.1); }
+
+  .view { display: none; }
+  .view.active { display: block; }
+
+  .tracks { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-bottom: 18px; }
+  .track-card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .track-card .row-top { display: flex; align-items: center; justify-content: space-between; }
+  .track-label { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; color: var(--muted); }
+  .track-label .which-a { color: var(--accent); }
+  .track-label .which-b { color: var(--accent-2); }
+
+  button.pick, button.secondary {
+    background: transparent;
+    border: 1px solid var(--line);
     color: var(--text);
+    font-size: 12px;
+    font-weight: 600;
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: border-color 0.15s ease, background 0.15s ease;
   }
-  .path { font-size: 11px; color: var(--muted); word-break: break-all; margin: 6px 0; min-height: 14px; }
+  button.pick:hover, button.secondary:hover { border-color: var(--accent); background: rgba(255,47,126,0.08); }
+  button.secondary:disabled { opacity: 0.35; cursor: not-allowed; }
+
+  .filename {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-height: 14px;
+  }
+
+  .wave-wrap { position: relative; }
   canvas.waveform {
     width: 100%;
-    height: 70px;
-    background: #0e0e16;
+    height: 64px;
+    background: #060709;
     border-radius: 6px;
-    margin: 8px 0;
+    border: 1px solid var(--line);
+    display: block;
   }
-  .bpm-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 13px; }
-  .bpm-row input {
-    width: 70px;
-    background: #0e0e16;
-    border: 1px solid #3a3a50;
+  canvas.waveform.selectable { cursor: crosshair; height: 72px; }
+  .wave-hint { font-size: 10.5px; color: var(--muted); margin-top: 4px; }
+
+  .sel-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .sel-range { font-family: var(--mono); font-size: 11.5px; color: var(--text); }
+  .bpm-block { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--muted); }
+  .bpm-block input {
+    width: 62px;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
     color: var(--text);
-    border-radius: 4px;
-    padding: 4px 6px;
+    font-family: var(--mono);
+    font-size: 13px;
+    border-radius: 5px;
+    padding: 3px 6px;
   }
-  .controls {
-    margin-top: 20px;
+  .duration { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+
+  /* generate panel (primary flow) */
+  .generate-panel {
     background: var(--panel);
+    border: 1px solid var(--line);
     border-radius: 10px;
-    padding: 16px;
-    border: 1px solid #2c2c3d;
+    padding: 20px;
+    margin-bottom: 18px;
   }
-  .controls-row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; font-size: 13px; }
-  select, input[type=number] {
-    background: #0e0e16;
-    border: 1px solid #3a3a50;
+  .controls-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .field label { font-size: 11px; font-weight: 600; letter-spacing: 0.04em; color: var(--muted); }
+  .field .hint { font-size: 10.5px; color: var(--muted); }
+  select, input[type=number], input[type=text] {
+    background: var(--panel-2);
+    border: 1px solid var(--line);
     color: var(--text);
-    border-radius: 4px;
-    padding: 5px 8px;
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 13px;
+    font-family: var(--sans);
   }
-  .result { margin-top: 16px; font-size: 13px; }
-  .status { margin-top: 10px; font-size: 12px; color: var(--muted); min-height: 16px; }
-  .status.error { color: #ff6b6b; }
-  audio { width: 100%; margin-top: 8px; }
+  select:focus, input:focus { outline: none; border-color: var(--accent); }
+  label.toggle { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text); cursor: pointer; }
+
+  button.primary {
+    background: var(--accent);
+    border: none;
+    color: #fff;
+    font-weight: 700;
+    font-size: 13.5px;
+    padding: 11px 22px;
+    border-radius: 7px;
+    cursor: pointer;
+    transition: filter 0.15s ease, transform 0.05s ease;
+  }
+  button.primary:hover { filter: brightness(1.08); }
+  button.primary:active { transform: scale(0.99); }
+  button.primary:disabled { background: var(--line); color: var(--muted); cursor: not-allowed; }
+
+  .status { margin-top: 12px; font-family: var(--mono); font-size: 12px; color: var(--muted); min-height: 16px; }
+  .status.error { color: #ff5c7a; }
+
+  .result { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 18px; }
+  .result-meta { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; flex-wrap: wrap; gap: 10px; }
+  .result-meta .stats { display: flex; gap: 24px; font-size: 13px; }
+  .result-meta .k { color: var(--muted); margin-right: 6px; }
+  .result-meta .v { font-family: var(--mono); color: var(--accent-2); font-weight: 700; }
+  audio { width: 100%; margin-top: 10px; height: 34px; }
+  .outpath { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 8px; word-break: break-all; }
+
+  /* style picker */
+  .style-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  .style-chip {
+    display: flex; align-items: center; gap: 7px;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    padding: 8px 10px;
+    font-size: 12.5px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .style-chip:has(input:checked) { border-color: var(--accent); background: rgba(255,47,126,0.1); }
+  .style-chip input { accent-color: var(--accent); }
+
+  fieldset.effect {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 12px 14px 14px;
+    margin: 0 0 14px;
+  }
+  fieldset.effect legend { padding: 0 6px; font-size: 12px; font-weight: 600; color: var(--muted); }
+  fieldset.effect .row { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 8px; }
+
+  /* advanced (manual) disclosure */
+  details.advanced { margin-top: 4px; }
+  details.advanced > summary {
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--muted);
+    padding: 8px 0;
+    list-style: none;
+  }
+  details.advanced > summary::-webkit-details-marker { display: none; }
+  details.advanced > summary::before { content: "▸ "; }
+  details.advanced[open] > summary::before { content: "▾ "; }
+  details.advanced .inner { padding-top: 12px; border-top: 1px solid var(--line); margin-top: 8px; }
+
+  .sequence-panel { margin-top: 14px; }
+  .sequence-panel h3 { margin: 0 0 10px; font-size: 12.5px; letter-spacing: 0.03em; color: var(--muted); }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; min-height: 30px; margin-bottom: 6px; }
+  .chip {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    padding: 5px 6px 5px 12px;
+    font-size: 12px;
+    font-family: var(--mono);
+  }
+  .chip .dot { width: 7px; height: 7px; border-radius: 50%; }
+  .chip .dot.a { background: var(--accent); }
+  .chip .dot.b { background: var(--accent-2); }
+  .chip button {
+    background: transparent; border: none; color: var(--muted); cursor: pointer;
+    font-size: 13px; padding: 2px 6px; border-radius: 50%;
+  }
+  .chip button:hover { color: var(--text); background: var(--line); }
+  .empty-hint { color: var(--muted); font-size: 12px; font-style: italic; }
+
+  @media (max-width: 720px) {
+    .tracks { grid-template-columns: 1fr; }
+  }
 </style>
 </head>
 <body>
-  <h1>Motor Mashup</h1>
-  <p class="sub">Incarca doua piese, aliniaza BPM-ul intre ele si amesteca-le.</p>
-
-  <div class="tracks">
-    <div class="track-card">
-      <h2>Piesa A</h2>
-      <button id="pickA">Alege fisier...</button>
-      <div class="path" id="pathA"></div>
-      <canvas class="waveform" id="waveA"></canvas>
-      <div class="bpm-row">
-        BPM detectat: <input type="number" id="bpmA" step="0.1" />
-        <span id="durA" style="color:var(--muted)"></span>
+  <div class="shell">
+    <header class="top">
+      <div class="brand">
+        <span class="mark"></span>
+        <h1>Motor Mashup</h1>
       </div>
-    </div>
-    <div class="track-card">
-      <h2>Piesa B</h2>
-      <button id="pickB">Alege fisier...</button>
-      <div class="path" id="pathB"></div>
-      <canvas class="waveform" id="waveB"></canvas>
-      <div class="bpm-row">
-        BPM detectat: <input type="number" id="bpmB" step="0.1" />
-        <span id="durB" style="color:var(--muted)"></span>
-      </div>
-    </div>
-  </div>
+      <nav class="tabs">
+        <button id="tabMashupBtn" class="active">Mashup</button>
+        <button id="tabRemixBtn">Remix</button>
+      </nav>
+    </header>
 
-  <div class="controls">
-    <div class="controls-row">
-      <label>Mod:
-        <select id="mode">
-          <option value="overlay">Suprapunere (ambele cânta simultan)</option>
-          <option value="crossfade">Crossfade (trecere de la A la B)</option>
-        </select>
-      </label>
-      <label>BPM tinta:
-        <input type="number" id="targetBpm" step="0.1" style="width:80px" placeholder="= BPM A" />
-      </label>
-      <span id="fadeWrap" style="display:none">
-        Durata fade (s): <input type="number" id="fadeSecs" value="4" step="0.5" style="width:60px" />
-      </span>
-      <span id="gainWrap">
-        Volum A: <input type="number" id="gainA" value="0.7" step="0.05" style="width:60px" />
-        Volum B: <input type="number" id="gainB" value="0.7" step="0.05" style="width:60px" />
-      </span>
-    </div>
-    <button id="runMashup" disabled>Aliniaza si amesteca</button>
-    <div class="status" id="status"></div>
-    <div class="result" id="result" style="display:none">
-      <div>BPM final: <b id="resBpm"></b> &middot; Durata: <b id="resDur"></b>s</div>
-      <canvas class="waveform" id="waveOut"></canvas>
-      <audio id="player" controls></audio>
-      <div class="path" id="outPath"></div>
-    </div>
+    <!-- ===================== MASHUP ===================== -->
+    <section class="view active" id="viewMashup">
+      <div class="tracks">
+        <div class="track-card">
+          <div class="row-top">
+            <span class="track-label"><span class="which-a">●</span>&nbsp; PIESA A</span>
+            <button class="pick" id="pickA">Alege fișier…</button>
+          </div>
+          <div class="filename" id="pathA"></div>
+          <div class="wave-wrap"><canvas class="waveform" id="waveA"></canvas></div>
+          <div class="sel-row">
+            <div class="bpm-block">BPM <input type="number" id="bpmA" step="0.1" /></div>
+            <span class="duration" id="durA"></span>
+          </div>
+        </div>
+
+        <div class="track-card">
+          <div class="row-top">
+            <span class="track-label"><span class="which-b">●</span>&nbsp; PIESA B</span>
+            <button class="pick" id="pickB">Alege fișier…</button>
+          </div>
+          <div class="filename" id="pathB"></div>
+          <div class="wave-wrap"><canvas class="waveform" id="waveB"></canvas></div>
+          <div class="sel-row">
+            <div class="bpm-block">BPM <input type="number" id="bpmB" step="0.1" /></div>
+            <span class="duration" id="durB"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="generate-panel">
+        <div class="controls-grid">
+          <div class="field">
+            <label>BPM țintă</label>
+            <input type="number" id="autoTargetBpm" step="0.1" placeholder="= BPM piesa A" />
+          </div>
+          <div class="field">
+            <label>Bucăți per piesă</label>
+            <input type="number" id="autoSegCount" value="3" min="1" step="1" />
+          </div>
+          <div class="field">
+            <label>Lungime frază (timpi)</label>
+            <input type="number" id="autoPhraseBeats" value="16" step="1" />
+            <span class="hint">16 timpi ≈ 4 măsuri, la 4/4</span>
+          </div>
+        </div>
+        <button class="primary" id="autoMashupBtn" disabled>Generează automat mashup-ul</button>
+        <div class="status" id="statusMashup"></div>
+
+        <div class="result" id="resultMashup" style="display:none">
+          <div class="result-meta">
+            <div class="stats">
+              <div><span class="k">BPM final</span><span class="v" id="mashResBpm"></span></div>
+              <div><span class="k">Durată</span><span class="v" id="mashResDur"></span></div>
+            </div>
+            <button class="secondary" id="saveMashup">Salvează ca…</button>
+          </div>
+          <canvas class="waveform" id="waveMashOut"></canvas>
+          <audio id="playerMashup" controls></audio>
+          <div class="outpath" id="mashOutPath"></div>
+        </div>
+
+        <details class="advanced">
+          <summary>Avansat: aleg eu manual bucățile</summary>
+          <div class="inner">
+            <div class="wave-hint" style="margin-bottom:10px">Trage cu mouse-ul pe formele de undă de mai sus ca să selectezi manual o bucată din A sau din B.</div>
+            <div class="tracks" style="margin-bottom:12px">
+              <div>
+                <canvas class="waveform selectable" id="waveASel"></canvas>
+                <div class="sel-row">
+                  <span class="sel-range" id="selRangeA">nicio selecție</span>
+                  <button class="secondary" id="addA" disabled>+ adaugă A în secvență</button>
+                </div>
+              </div>
+              <div>
+                <canvas class="waveform selectable" id="waveBSel"></canvas>
+                <div class="sel-row">
+                  <span class="sel-range" id="selRangeB">nicio selecție</span>
+                  <button class="secondary" id="addB" disabled>+ adaugă B în secvență</button>
+                </div>
+              </div>
+            </div>
+            <div class="sequence-panel">
+              <h3>SECVENȚA MANUALĂ (în ordinea asta se lipesc bucățile)</h3>
+              <div class="chips" id="sequenceChips"><span class="empty-hint">adaugă bucăți din piesa A sau B mai sus</span></div>
+            </div>
+            <div class="controls-grid" style="margin-top:12px">
+              <div class="field">
+                <label>Crossfade la îmbinări (s)</label>
+                <input type="number" id="seamFade" value="0.15" step="0.05" />
+              </div>
+            </div>
+            <button class="primary" id="buildMashup" disabled>Construiește din secvența manuală</button>
+          </div>
+        </details>
+      </div>
+    </section>
+
+    <!-- ===================== REMIX ===================== -->
+    <section class="view" id="viewRemix">
+      <div class="track-card" style="margin-bottom:18px">
+        <div class="row-top">
+          <span class="track-label"><span class="which-a">●</span>&nbsp; PIESA</span>
+          <button class="pick" id="pickR">Alege fișier…</button>
+        </div>
+        <div class="filename" id="pathR"></div>
+        <canvas class="waveform" id="waveR"></canvas>
+        <div class="sel-row">
+          <div class="bpm-block">BPM <input type="number" id="bpmR" step="0.1" /></div>
+          <span class="duration" id="durR"></span>
+        </div>
+      </div>
+
+      <div class="generate-panel">
+        <div class="field" style="margin-bottom:8px">
+          <label>Stiluri (poți alege mai multe deodată, se aplică în lanț)</label>
+        </div>
+        <div class="style-grid" id="styleGrid"></div>
+
+        <div class="field" style="margin-bottom:16px">
+          <label>Descriere liberă (opțional)</label>
+          <input type="text" id="customDesc" placeholder="ex: bas greu, mai mult ecou, ritm rapid" />
+          <span class="hint">recunoaște cuvinte cheie (ecou, bas, distorsiune, rapid, lent, glitch…), nu e o descriere completă liberă</span>
+        </div>
+
+        <fieldset class="effect">
+          <legend><label class="toggle"><input type="checkbox" id="echoOn" /> Ecou (control fin, opțional)</label></legend>
+          <div class="row">
+            <div class="field"><label>Întârziere (s)</label><input type="number" id="echoDelay" value="0.25" step="0.01" /></div>
+            <div class="field"><label>Feedback</label><input type="number" id="echoFeedback" value="0.35" step="0.05" min="0" max="0.95" /></div>
+            <div class="field"><label>Amestec</label><input type="number" id="echoMix" value="0.3" step="0.05" min="0" max="1" /></div>
+          </div>
+        </fieldset>
+
+        <fieldset class="effect">
+          <legend><label class="toggle"><input type="checkbox" id="stutterOn" /> Repetiție / stutter (control fin, opțional)</label></legend>
+          <div class="row">
+            <div class="field"><label>Bucată (s)</label><input type="number" id="stutterChunk" value="0.2" step="0.01" /></div>
+            <div class="field"><label>De câte ori</label><input type="number" id="stutterRepeats" value="2" step="1" min="1" /></div>
+          </div>
+        </fieldset>
+
+        <button class="primary" id="applyRemix" disabled>Generează remix</button>
+        <div class="status" id="statusRemix"></div>
+
+        <div class="result" id="resultRemix" style="display:none">
+          <div class="result-meta">
+            <div class="stats">
+              <div><span class="k">BPM</span><span class="v" id="remixResBpm"></span></div>
+              <div><span class="k">Durată</span><span class="v" id="remixResDur"></span></div>
+            </div>
+            <button class="secondary" id="saveRemix">Salvează ca…</button>
+          </div>
+          <canvas class="waveform" id="waveRemixOut"></canvas>
+          <audio id="playerRemix" controls></audio>
+          <div class="outpath" id="remixOutPath"></div>
+        </div>
+      </div>
+    </section>
   </div>
 
 <script>
 const { invoke } = window.__TAURI__.tauri;
-const { open } = window.__TAURI__.dialog;
+const { open, save } = window.__TAURI__.dialog;
 const { convertFileSrc } = window.__TAURI__.tauri;
 
-let trackA = null; // { path, bpm, duration_secs, waveform }
-let trackB = null;
+// ---------- tabs ----------
+const tabMashupBtn = document.getElementById('tabMashupBtn');
+const tabRemixBtn = document.getElementById('tabRemixBtn');
+const viewMashup = document.getElementById('viewMashup');
+const viewRemix = document.getElementById('viewRemix');
+tabMashupBtn.addEventListener('click', () => {
+  tabMashupBtn.classList.add('active'); tabRemixBtn.classList.remove('active');
+  viewMashup.classList.add('active'); viewRemix.classList.remove('active');
+});
+tabRemixBtn.addEventListener('click', () => {
+  tabRemixBtn.classList.add('active'); tabMashupBtn.classList.remove('active');
+  viewRemix.classList.add('active'); viewMashup.classList.remove('active');
+});
 
-function drawWave(canvas, peaks) {
+// ---------- helpers ----------
+function fmtTime(s) {
+  const m = Math.floor(s / 60);
+  const sec = (s % 60).toFixed(1).padStart(4, '0');
+  return `${m}:${sec}`;
+}
+function fmtDur(s) {
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60).toString().padStart(2, '0');
+  return `${m}:${sec}`;
+}
+function setStatus(id, msg, isError) {
+  const el = document.getElementById(id);
+  el.textContent = msg;
+  el.className = 'status' + (isError ? ' error' : '');
+}
+
+function drawWave(canvas, peaks, color, selection, duration) {
   const ctx = canvas.getContext('2d');
   const w = canvas.clientWidth || 500;
-  const h = canvas.clientHeight || 70;
-  canvas.width = w; canvas.height = h;
+  const h = canvas.clientHeight || 64;
+  canvas.width = w * devicePixelRatio; canvas.height = h * devicePixelRatio;
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.scale(devicePixelRatio, devicePixelRatio);
   ctx.clearRect(0, 0, w, h);
+
+  if (selection && duration > 0) {
+    const x1 = (selection.start / duration) * w;
+    const x2 = (selection.end / duration) * w;
+    ctx.fillStyle = 'rgba(255, 210, 63, 0.18)';
+    ctx.fillRect(Math.min(x1,x2), 0, Math.abs(x2-x1), h);
+  }
+
   if (!peaks || peaks.length === 0) return;
-  ctx.strokeStyle = '#54c8ff';
+  ctx.strokeStyle = color || '#ff2f7e';
   ctx.lineWidth = 1;
   const mid = h / 2;
   const step = w / peaks.length;
   ctx.beginPath();
   for (let i = 0; i < peaks.length; i++) {
-    const amp = Math.min(1, peaks[i]) * mid * 0.95;
+    const amp = Math.min(1, peaks[i]) * mid * 0.9;
     const x = i * step;
     ctx.moveTo(x, mid - amp);
     ctx.lineTo(x, mid + amp);
@@ -169,90 +493,265 @@ function drawWave(canvas, peaks) {
   ctx.stroke();
 }
 
-function setStatus(msg, isError) {
-  const el = document.getElementById('status');
-  el.textContent = msg;
-  el.className = 'status' + (isError ? ' error' : '');
+function makeSelectable(canvas, getDuration, onChange) {
+  let dragging = false, startX = 0;
+  const toSec = (clientX) => {
+    const rect = canvas.getBoundingClientRect();
+    const frac = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+    return frac * getDuration();
+  };
+  canvas.addEventListener('mousedown', (e) => {
+    if (!getDuration()) return;
+    dragging = true;
+    startX = toSec(e.clientX);
+    onChange(startX, startX);
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const cur = toSec(e.clientX);
+    onChange(Math.min(startX, cur), Math.max(startX, cur));
+  });
+  window.addEventListener('mouseup', () => { dragging = false; });
 }
 
-function maybeEnableRun() {
-  document.getElementById('runMashup').disabled = !(trackA && trackB);
+// ---------- MASHUP tab state ----------
+let trackA = null, trackB = null;
+let selA = null, selB = null;
+let sequence = [];
+
+function redrawA() {
+  drawWave(document.getElementById('waveA'), trackA?.waveform, '#ff2f7e', null, 0);
+  drawWave(document.getElementById('waveASel'), trackA?.waveform, '#ff2f7e', selA, trackA?.duration_secs || 0);
+}
+function redrawB() {
+  drawWave(document.getElementById('waveB'), trackB?.waveform, '#23d3c5', null, 0);
+  drawWave(document.getElementById('waveBSel'), trackB?.waveform, '#23d3c5', selB, trackB?.duration_secs || 0);
 }
 
-async function pickAndAnalyze(which) {
-  try {
-    const selected = await open({
-      multiple: false,
-      filters: [{ name: 'Audio', extensions: ['mp3', 'wav', 'flac', 'ogg', 'm4a'] }],
-    });
-    if (!selected) return;
-    setStatus('Analizez ' + selected + ' ...');
-    const info = await invoke('analyze_track', { path: selected });
-    const data = { path: selected, ...info };
-    if (which === 'A') {
-      trackA = data;
-      document.getElementById('pathA').textContent = selected;
-      document.getElementById('bpmA').value = info.bpm.toFixed(1);
-      document.getElementById('durA').textContent = info.duration_secs.toFixed(1) + 's';
-      drawWave(document.getElementById('waveA'), info.waveform);
-    } else {
-      trackB = data;
-      document.getElementById('pathB').textContent = selected;
-      document.getElementById('bpmB').value = info.bpm.toFixed(1);
-      document.getElementById('durB').textContent = info.duration_secs.toFixed(1) + 's';
-      drawWave(document.getElementById('waveB'), info.waveform);
-    }
-    setStatus('Gata.');
-    maybeEnableRun();
-  } catch (e) {
-    setStatus('Eroare: ' + e, true);
-  }
-}
-
-document.getElementById('pickA').addEventListener('click', () => pickAndAnalyze('A'));
-document.getElementById('pickB').addEventListener('click', () => pickAndAnalyze('B'));
-
-document.getElementById('mode').addEventListener('change', (e) => {
-  document.getElementById('fadeWrap').style.display = e.target.value === 'crossfade' ? 'inline' : 'none';
-  document.getElementById('gainWrap').style.display = e.target.value === 'overlay' ? 'inline' : 'none';
+makeSelectable(document.getElementById('waveASel'), () => trackA?.duration_secs || 0, (s,e) => {
+  selA = { start: s, end: e };
+  document.getElementById('selRangeA').textContent = `${fmtTime(s)} – ${fmtTime(e)}`;
+  document.getElementById('addA').disabled = !(trackA && e > s + 0.05);
+  redrawA();
+});
+makeSelectable(document.getElementById('waveBSel'), () => trackB?.duration_secs || 0, (s,e) => {
+  selB = { start: s, end: e };
+  document.getElementById('selRangeB').textContent = `${fmtTime(s)} – ${fmtTime(e)}`;
+  document.getElementById('addB').disabled = !(trackB && e > s + 0.05);
+  redrawB();
 });
 
-document.getElementById('runMashup').addEventListener('click', async () => {
-  if (!trackA || !trackB) return;
-  const mode = document.getElementById('mode').value;
-  const bpmA = parseFloat(document.getElementById('bpmA').value) || null;
-  const bpmB = parseFloat(document.getElementById('bpmB').value) || null;
-  const targetRaw = document.getElementById('targetBpm').value;
-  const target = targetRaw ? parseFloat(targetRaw) : null;
-  const gainA = parseFloat(document.getElementById('gainA').value) || 0.7;
-  const gainB = parseFloat(document.getElementById('gainB').value) || 0.7;
-  const fadeSecs = parseFloat(document.getElementById('fadeSecs').value) || 4.0;
+function maybeEnableAuto() {
+  document.getElementById('autoMashupBtn').disabled = !(trackA && trackB);
+}
 
-  setStatus('Amestec in curs...');
-  document.getElementById('runMashup').disabled = true;
+let trackR = null;
+
+async function pickTrack(which) {
+  const selected = await open({ multiple: false, filters: [{ name: 'Audio', extensions: ['mp3','wav','flac','ogg','m4a'] }] });
+  if (!selected) return;
+  setStatus(which === 'R' ? 'statusRemix' : 'statusMashup', 'Analizez ' + selected.split(/[\\/]/).pop() + ' …');
+  const info = await invoke('analyze_track', { path: selected });
+  const data = { path: selected, ...info };
+  if (which === 'A') {
+    trackA = data; document.getElementById('pathA').textContent = selected;
+    document.getElementById('bpmA').value = info.bpm.toFixed(1);
+    document.getElementById('durA').textContent = fmtDur(info.duration_secs);
+    selA = null; document.getElementById('selRangeA').textContent = 'nicio selecție'; document.getElementById('addA').disabled = true;
+    redrawA(); maybeEnableAuto();
+  } else if (which === 'B') {
+    trackB = data; document.getElementById('pathB').textContent = selected;
+    document.getElementById('bpmB').value = info.bpm.toFixed(1);
+    document.getElementById('durB').textContent = fmtDur(info.duration_secs);
+    selB = null; document.getElementById('selRangeB').textContent = 'nicio selecție'; document.getElementById('addB').disabled = true;
+    redrawB(); maybeEnableAuto();
+  } else {
+    trackR = data; document.getElementById('pathR').textContent = selected;
+    document.getElementById('bpmR').value = info.bpm.toFixed(1);
+    document.getElementById('durR').textContent = fmtDur(info.duration_secs);
+    drawWave(document.getElementById('waveR'), info.waveform, '#ff2f7e', null, 0);
+    document.getElementById('applyRemix').disabled = false;
+  }
+  setStatus(which === 'R' ? 'statusRemix' : 'statusMashup', 'Gata.');
+}
+document.getElementById('pickA').addEventListener('click', () => pickTrack('A'));
+document.getElementById('pickB').addEventListener('click', () => pickTrack('B'));
+document.getElementById('pickR').addEventListener('click', () => pickTrack('R'));
+
+// ---------- automatic mashup ----------
+document.getElementById('autoMashupBtn').addEventListener('click', async () => {
+  if (!trackA || !trackB) return;
+  const targetRaw = document.getElementById('autoTargetBpm').value;
+  const target = targetRaw ? parseFloat(targetRaw) : null;
+  const segCount = parseInt(document.getElementById('autoSegCount').value) || 3;
+  const phraseBeats = parseFloat(document.getElementById('autoPhraseBeats').value) || 16;
+
+  setStatus('statusMashup', 'Aleg automat bucățile și construiesc mashup-ul…');
+  document.getElementById('autoMashupBtn').disabled = true;
   try {
-    const res = await invoke('mashup_tracks', {
+    const res = await invoke('auto_mashup', {
       pathA: trackA.path,
       pathB: trackB.path,
-      bpmAOverride: bpmA,
-      bpmBOverride: bpmB,
+      bpmAOverride: parseFloat(document.getElementById('bpmA').value) || null,
+      bpmBOverride: parseFloat(document.getElementById('bpmB').value) || null,
       targetBpm: target,
-      mode,
-      gainA, gainB,
-      fadeSecs,
+      phraseBeats,
+      segmentsPerTrack: segCount,
+      seamCrossfadeSecs: 0.2,
     });
-    document.getElementById('result').style.display = 'block';
-    document.getElementById('resBpm').textContent = res.bpm_final.toFixed(1);
-    document.getElementById('resDur').textContent = res.duration_secs.toFixed(1);
-    document.getElementById('outPath').textContent = res.out_path;
-    drawWave(document.getElementById('waveOut'), res.waveform);
-    const player = document.getElementById('player');
-    player.src = convertFileSrc(res.out_path);
-    setStatus('Gata — fisier scris la: ' + res.out_path);
+    document.getElementById('resultMashup').style.display = 'block';
+    document.getElementById('mashResBpm').textContent = res.bpm_final.toFixed(1);
+    document.getElementById('mashResDur').textContent = fmtDur(res.duration_secs);
+    document.getElementById('mashOutPath').textContent = res.out_path;
+    drawWave(document.getElementById('waveMashOut'), res.waveform, '#ffd23f', null, 0);
+    document.getElementById('playerMashup').src = convertFileSrc(res.out_path);
+    document.getElementById('saveMashup').dataset.src = res.out_path;
+    setStatus('statusMashup', 'Gata.');
   } catch (e) {
-    setStatus('Eroare: ' + e, true);
+    setStatus('statusMashup', 'Eroare: ' + e, true);
   } finally {
-    document.getElementById('runMashup').disabled = false;
+    document.getElementById('autoMashupBtn').disabled = false;
+  }
+});
+
+// ---------- manual (advanced) sequence builder ----------
+function renderSequence() {
+  const wrap = document.getElementById('sequenceChips');
+  wrap.innerHTML = '';
+  if (sequence.length === 0) {
+    wrap.innerHTML = '<span class="empty-hint">adaugă bucăți din piesa A sau B mai sus</span>';
+  } else {
+    sequence.forEach((seg, i) => {
+      const chip = document.createElement('div');
+      chip.className = 'chip';
+      chip.innerHTML = `<span class="dot ${seg.trackKey.toLowerCase()}"></span>${seg.trackKey}: ${fmtTime(seg.start)}–${fmtTime(seg.end)}`;
+      const up = document.createElement('button'); up.textContent = '↑'; up.disabled = i === 0;
+      up.addEventListener('click', () => { [sequence[i-1], sequence[i]] = [sequence[i], sequence[i-1]]; renderSequence(); });
+      const down = document.createElement('button'); down.textContent = '↓'; down.disabled = i === sequence.length - 1;
+      down.addEventListener('click', () => { [sequence[i+1], sequence[i]] = [sequence[i], sequence[i+1]]; renderSequence(); });
+      const del = document.createElement('button'); del.textContent = '×';
+      del.addEventListener('click', () => { sequence.splice(i, 1); renderSequence(); });
+      chip.appendChild(up); chip.appendChild(down); chip.appendChild(del);
+      wrap.appendChild(chip);
+    });
+  }
+  document.getElementById('buildMashup').disabled = sequence.length === 0;
+}
+document.getElementById('addA').addEventListener('click', () => {
+  if (!trackA || !selA) return;
+  sequence.push({ trackKey: 'A', path: trackA.path, start: selA.start, end: selA.end, bpmOverride: parseFloat(document.getElementById('bpmA').value) || null });
+  renderSequence();
+});
+document.getElementById('addB').addEventListener('click', () => {
+  if (!trackB || !selB) return;
+  sequence.push({ trackKey: 'B', path: trackB.path, start: selB.start, end: selB.end, bpmOverride: parseFloat(document.getElementById('bpmB').value) || null });
+  renderSequence();
+});
+renderSequence();
+
+document.getElementById('buildMashup').addEventListener('click', async () => {
+  if (sequence.length === 0) return;
+  const seamFade = parseFloat(document.getElementById('seamFade').value) || 0.15;
+  setStatus('statusMashup', 'Construiesc din secvența manuală…');
+  document.getElementById('buildMashup').disabled = true;
+  try {
+    const res = await invoke('build_segment_mashup', {
+      segments: sequence.map(s => ({ path: s.path, startSecs: s.start, endSecs: s.end, bpmOverride: s.bpmOverride })),
+      targetBpm: parseFloat(document.getElementById('autoTargetBpm').value) || null,
+      seamCrossfadeSecs: seamFade,
+    });
+    document.getElementById('resultMashup').style.display = 'block';
+    document.getElementById('mashResBpm').textContent = res.bpm_final.toFixed(1);
+    document.getElementById('mashResDur').textContent = fmtDur(res.duration_secs);
+    document.getElementById('mashOutPath').textContent = res.out_path;
+    drawWave(document.getElementById('waveMashOut'), res.waveform, '#ffd23f', null, 0);
+    document.getElementById('playerMashup').src = convertFileSrc(res.out_path);
+    document.getElementById('saveMashup').dataset.src = res.out_path;
+    setStatus('statusMashup', 'Gata.');
+  } catch (e) {
+    setStatus('statusMashup', 'Eroare: ' + e, true);
+  } finally {
+    document.getElementById('buildMashup').disabled = false;
+  }
+});
+
+document.getElementById('saveMashup').addEventListener('click', async () => {
+  const src = document.getElementById('saveMashup').dataset.src;
+  if (!src) return;
+  const dest = await save({ defaultPath: 'mashup.wav', filters: [{ name: 'WAV', extensions: ['wav'] }] });
+  if (!dest) return;
+  try {
+    await invoke('export_to', { srcPath: src, destPath: dest });
+    setStatus('statusMashup', 'Salvat la: ' + dest);
+  } catch (e) {
+    setStatus('statusMashup', 'Eroare la salvare: ' + e, true);
+  }
+});
+
+// ---------- REMIX tab ----------
+(async () => {
+  try {
+    const styles = await invoke('list_styles'); // [[id, label], ...]
+    const grid = document.getElementById('styleGrid');
+    styles.forEach(([id, label]) => {
+      const wrap = document.createElement('label');
+      wrap.className = 'style-chip';
+      wrap.innerHTML = `<input type="checkbox" value="${id}" /> ${label}`;
+      grid.appendChild(wrap);
+    });
+  } catch (e) {
+    setStatus('statusRemix', 'Nu am putut încărca lista de stiluri: ' + e, true);
+  }
+})();
+
+document.getElementById('applyRemix').addEventListener('click', async () => {
+  if (!trackR) return;
+  const bpmOverride = parseFloat(document.getElementById('bpmR').value) || null;
+  const selectedStyles = Array.from(document.querySelectorAll('#styleGrid input:checked')).map(el => el.value);
+  const customDesc = document.getElementById('customDesc').value.trim();
+  const echoOn = document.getElementById('echoOn').checked;
+  const stutterOn = document.getElementById('stutterOn').checked;
+
+  const effects = { styles: selectedStyles, customDescription: customDesc || null };
+  if (echoOn) {
+    effects.echoDelaySecs = parseFloat(document.getElementById('echoDelay').value) || 0.25;
+    effects.echoFeedback = parseFloat(document.getElementById('echoFeedback').value) || 0.35;
+    effects.echoMix = parseFloat(document.getElementById('echoMix').value) || 0.3;
+  }
+  if (stutterOn) {
+    effects.stutterChunkSecs = parseFloat(document.getElementById('stutterChunk').value) || 0.2;
+    effects.stutterRepeats = parseInt(document.getElementById('stutterRepeats').value) || 2;
+  }
+
+  setStatus('statusRemix', 'Generez remix-ul…');
+  document.getElementById('applyRemix').disabled = true;
+  try {
+    const res = await invoke('remix_track', { path: trackR.path, bpmOverride, effects });
+    document.getElementById('resultRemix').style.display = 'block';
+    document.getElementById('remixResBpm').textContent = res.bpm_final.toFixed(1);
+    document.getElementById('remixResDur').textContent = fmtDur(res.duration_secs);
+    document.getElementById('remixOutPath').textContent = res.out_path;
+    drawWave(document.getElementById('waveRemixOut'), res.waveform, '#ffd23f', null, 0);
+    document.getElementById('playerRemix').src = convertFileSrc(res.out_path);
+    document.getElementById('saveRemix').dataset.src = res.out_path;
+    setStatus('statusRemix', 'Gata.');
+  } catch (e) {
+    setStatus('statusRemix', 'Eroare: ' + e, true);
+  } finally {
+    document.getElementById('applyRemix').disabled = false;
+  }
+});
+
+document.getElementById('saveRemix').addEventListener('click', async () => {
+  const src = document.getElementById('saveRemix').dataset.src;
+  if (!src) return;
+  const dest = await save({ defaultPath: 'remix.wav', filters: [{ name: 'WAV', extensions: ['wav'] }] });
+  if (!dest) return;
+  try {
+    await invoke('export_to', { srcPath: src, destPath: dest });
+    setStatus('statusRemix', 'Salvat la: ' + dest);
+  } catch (e) {
+    setStatus('statusRemix', 'Eroare la salvare: ' + e, true);
   }
 });
 </script>
