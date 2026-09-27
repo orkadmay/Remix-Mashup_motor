@@ -311,6 +311,34 @@
             <span class="hint">16 timpi ≈ 4 măsuri, la 4/4</span>
           </div>
         </div>
+
+        <div class="field" style="margin-bottom:8px">
+          <label>Stiluri pentru mashup (opțional, se aplică pe rezultatul final)</label>
+        </div>
+        <div class="style-grid" id="mashStyleGrid"></div>
+
+        <div class="field" style="margin-bottom:16px">
+          <label>Descriere liberă (opțional)</label>
+          <input type="text" id="mashCustomDesc" placeholder="ex: bas greu, mai mult ecou, ritm rapid" />
+        </div>
+
+        <fieldset class="effect">
+          <legend><label class="toggle"><input type="checkbox" id="mashEchoOn" /> Ecou (opțional)</label></legend>
+          <div class="row">
+            <div class="field"><label>Întârziere (s)</label><input type="number" id="mashEchoDelay" value="0.25" step="0.01" /></div>
+            <div class="field"><label>Feedback</label><input type="number" id="mashEchoFeedback" value="0.35" step="0.05" min="0" max="0.95" /></div>
+            <div class="field"><label>Amestec</label><input type="number" id="mashEchoMix" value="0.3" step="0.05" min="0" max="1" /></div>
+          </div>
+        </fieldset>
+
+        <fieldset class="effect">
+          <legend><label class="toggle"><input type="checkbox" id="mashStutterOn" /> Repetiție / stutter (opțional)</label></legend>
+          <div class="row">
+            <div class="field"><label>Bucată (s)</label><input type="number" id="mashStutterChunk" value="0.2" step="0.01" /></div>
+            <div class="field"><label>De câte ori</label><input type="number" id="mashStutterRepeats" value="2" step="1" min="1" /></div>
+          </div>
+        </fieldset>
+
         <button class="primary" id="autoMashupBtn" disabled>Generează automat mashup-ul</button>
         <div class="status" id="statusMashup"></div>
 
@@ -578,6 +606,46 @@ document.getElementById('pickA').addEventListener('click', () => pickTrack('A'))
 document.getElementById('pickB').addEventListener('click', () => pickTrack('B'));
 document.getElementById('pickR').addEventListener('click', () => pickTrack('R'));
 
+// ---------- style pickers (shared between tabs) ----------
+(async () => {
+  try {
+    const styles = await invoke('list_styles'); // [[id, label], ...]
+    const remixGrid = document.getElementById('styleGrid');
+    const mashGrid = document.getElementById('mashStyleGrid');
+    styles.forEach(([id, label]) => {
+      const mk = () => {
+        const wrap = document.createElement('label');
+        wrap.className = 'style-chip';
+        wrap.innerHTML = `<input type="checkbox" value="${id}" /> ${label}`;
+        return wrap;
+      };
+      remixGrid.appendChild(mk());
+      mashGrid.appendChild(mk());
+    });
+  } catch (e) {
+    setStatus('statusRemix', 'Nu am putut încărca lista de stiluri: ' + e, true);
+  }
+})();
+
+function collectEffects(prefix) {
+  const gridId = prefix === 'mash' ? 'mashStyleGrid' : 'styleGrid';
+  const styles = Array.from(document.querySelectorAll(`#${gridId} input:checked`)).map(el => el.value);
+  const descEl = document.getElementById(prefix === 'mash' ? 'mashCustomDesc' : 'customDesc');
+  const echoOnEl = document.getElementById(prefix === 'mash' ? 'mashEchoOn' : 'echoOn');
+  const stutterOnEl = document.getElementById(prefix === 'mash' ? 'mashStutterOn' : 'stutterOn');
+  const effects = { styles, customDescription: (descEl.value || '').trim() || null };
+  if (echoOnEl.checked) {
+    effects.echoDelaySecs = parseFloat(document.getElementById(prefix === 'mash' ? 'mashEchoDelay' : 'echoDelay').value) || 0.25;
+    effects.echoFeedback = parseFloat(document.getElementById(prefix === 'mash' ? 'mashEchoFeedback' : 'echoFeedback').value) || 0.35;
+    effects.echoMix = parseFloat(document.getElementById(prefix === 'mash' ? 'mashEchoMix' : 'echoMix').value) || 0.3;
+  }
+  if (stutterOnEl.checked) {
+    effects.stutterChunkSecs = parseFloat(document.getElementById(prefix === 'mash' ? 'mashStutterChunk' : 'stutterChunk').value) || 0.2;
+    effects.stutterRepeats = parseInt(document.getElementById(prefix === 'mash' ? 'mashStutterRepeats' : 'stutterRepeats').value) || 2;
+  }
+  return effects;
+}
+
 // ---------- automatic mashup ----------
 document.getElementById('autoMashupBtn').addEventListener('click', async () => {
   if (!trackA || !trackB) return;
@@ -585,6 +653,7 @@ document.getElementById('autoMashupBtn').addEventListener('click', async () => {
   const target = targetRaw ? parseFloat(targetRaw) : null;
   const segCount = parseInt(document.getElementById('autoSegCount').value) || 3;
   const phraseBeats = parseFloat(document.getElementById('autoPhraseBeats').value) || 16;
+  const effects = collectEffects('mash');
 
   setStatus('statusMashup', 'Aleg automat bucățile și construiesc mashup-ul…');
   document.getElementById('autoMashupBtn').disabled = true;
@@ -598,6 +667,7 @@ document.getElementById('autoMashupBtn').addEventListener('click', async () => {
       phraseBeats,
       segmentsPerTrack: segCount,
       seamCrossfadeSecs: 0.2,
+      effects,
     });
     document.getElementById('resultMashup').style.display = 'block';
     document.getElementById('mashResBpm').textContent = res.bpm_final.toFixed(1);
@@ -659,6 +729,7 @@ document.getElementById('buildMashup').addEventListener('click', async () => {
       segments: sequence.map(s => ({ path: s.path, startSecs: s.start, endSecs: s.end, bpmOverride: s.bpmOverride })),
       targetBpm: parseFloat(document.getElementById('autoTargetBpm').value) || null,
       seamCrossfadeSecs: seamFade,
+      effects: collectEffects('mash'),
     });
     document.getElementById('resultMashup').style.display = 'block';
     document.getElementById('mashResBpm').textContent = res.bpm_final.toFixed(1);
@@ -707,21 +778,7 @@ document.getElementById('saveMashup').addEventListener('click', async () => {
 document.getElementById('applyRemix').addEventListener('click', async () => {
   if (!trackR) return;
   const bpmOverride = parseFloat(document.getElementById('bpmR').value) || null;
-  const selectedStyles = Array.from(document.querySelectorAll('#styleGrid input:checked')).map(el => el.value);
-  const customDesc = document.getElementById('customDesc').value.trim();
-  const echoOn = document.getElementById('echoOn').checked;
-  const stutterOn = document.getElementById('stutterOn').checked;
-
-  const effects = { styles: selectedStyles, customDescription: customDesc || null };
-  if (echoOn) {
-    effects.echoDelaySecs = parseFloat(document.getElementById('echoDelay').value) || 0.25;
-    effects.echoFeedback = parseFloat(document.getElementById('echoFeedback').value) || 0.35;
-    effects.echoMix = parseFloat(document.getElementById('echoMix').value) || 0.3;
-  }
-  if (stutterOn) {
-    effects.stutterChunkSecs = parseFloat(document.getElementById('stutterChunk').value) || 0.2;
-    effects.stutterRepeats = parseInt(document.getElementById('stutterRepeats').value) || 2;
-  }
+  const effects = collectEffects('remix');
 
   setStatus('statusRemix', 'Generez remix-ul…');
   document.getElementById('applyRemix').disabled = true;

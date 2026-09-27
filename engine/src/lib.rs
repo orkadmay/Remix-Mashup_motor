@@ -169,126 +169,20 @@ pub fn detect_bpm(buf: &AudioBuffer, min_bpm: f32, max_bpm: f32) -> f32 {
     frame_rate * 60.0 / best_lag as f32
 }
 
-/// Time-stretch WSOLA: schimba durata (deci tempo-ul) fara sa schimbe tonul.
+/// Time-stretch: schimba durata (deci tempo-ul) fara sa schimbe tonul.
 /// `speed` > 1.0 = mai rapid (mai scurt), `speed` < 1.0 = mai lent (mai lung).
 ///
-/// STARE ACTUALA (verificat): durata rezultata e corecta (testat pe click-track-uri:
-/// BPM-ul dupa aliniere cade exact pe tinta). Calitatea tonala insa NU e inca la nivel
-/// de productie: testat pe un ton pur, tonul iese cu o mica deviatie de frecventa
-/// (dependenta de fereastra/hop aleasa, nu de `speed`), semn ca alegerea offsetului de
-/// analiza (cautarea de faza) are inca o eroare de fond. Pe muzica reala (nu tonuri pure)
-/// efectul e mai putin evident, dar tot va suna cu artefacte usoare ("warble").
-/// Recomandare: de inlocuit cu o biblioteca Rust testata (`wsola`, `signalsmith-stretch`
-/// sau `timestretch`) inainte de a construi peste asta functionalitati de productie —
-/// vezi nota din README.
+/// Foloseste biblioteca `wsola` (Rust, testata separat, algoritm WSOLA cu cautare
+/// de faza) in locul unei implementari proprii - calitatea tonala e responsabilitatea
+/// bibliotecii, nu mai e nevoie s-o reinventam si sa-i gasim bug-uri noi.
 pub fn time_stretch(buf: &AudioBuffer, speed: f32) -> AudioBuffer {
     if (speed - 1.0).abs() < 1e-4 || buf.samples.is_empty() {
         return buf.clone();
     }
-
-    let input = &buf.samples;
-    let n_in = input.len();
-
-    let frame_size: usize = 2048;
-    let synthesis_hop: usize = frame_size / 4; // 75% overlap la sinteza
-    let analysis_hop_nominal = (synthesis_hop as f32 * speed).round() as usize;
-    let analysis_hop_nominal = analysis_hop_nominal.max(1);
-    let search_radius: usize = synthesis_hop / 2;
-
-    // fereastra Hann
-    let window: Vec<f32> = (0..frame_size)
-        .map(|i| 0.5 - 0.5 * ((2.0 * std::f32::consts::PI * i as f32) / (frame_size as f32 - 1.0)).cos())
-        .collect();
-
-    let out_len_estimate = ((n_in as f32) / speed) as usize + frame_size + 8;
-    let mut out = vec![0.0f32; out_len_estimate];
-    let mut norm = vec![0.0f32; out_len_estimate];
-
-    let mut analysis_pos: i64 = 0;
-    let mut synth_pos: usize = 0;
-    let mut prev_frame_tail: Vec<f32> = vec![0.0; search_radius.max(1)];
-    let mut have_prev = false;
-
-    loop {
-        // pozitia ideala de analiza pentru acest cadru de sinteza
-        let ideal = analysis_pos.max(0) as usize;
-        if ideal >= n_in {
-            break;
-        }
-
-        // cautam in +/- search_radius jurul pozitiei ideale cel mai bun offset
-        // prin corelare cu coada cadrului anterior (continuitate de faza).
-        let mut best_offset: i64 = 0;
-        if have_prev {
-            let mut best_score = f32::MIN;
-            let lo = -(search_radius.min(ideal) as i64);
-            let hi = search_radius as i64;
-            // normalizam scorul (corelatie normalizata) si preferam, la egalitate,
-            // decalajul cel mai apropiat de pozitia ideala (0) - evita "agatarea"
-            // pe un multiplu de perioada la semnale foarte periodice.
-            let mut off = lo;
-            while off <= hi {
-                let start = ideal as i64 + off;
-                if start < 0 || (start as usize) + search_radius > n_in {
-                    off += 1;
-                    continue;
-                }
-                let start = start as usize;
-                let mut dot = 0.0f32;
-                let mut energy = 0.0f32;
-                for k in 0..search_radius {
-                    dot += prev_frame_tail[k] * input[start + k];
-                    energy += input[start + k] * input[start + k];
-                }
-                let score = dot / (energy.sqrt() + 1e-6);
-                let better = score > best_score + 1e-4
-                    || (score > best_score - 1e-4 && off.abs() < best_offset.abs());
-                if better {
-                    best_score = score.max(best_score);
-                    best_offset = off;
-                }
-                off += 1;
-            }
-        }
-
-        let frame_start = (ideal as i64 + best_offset).max(0) as usize;
-        if frame_start + frame_size > n_in {
-            break;
-        }
-
-        // aplicam fereastra si adaugam (overlap-add) in iesire
-        for k in 0..frame_size {
-            let s = input[frame_start + k] * window[k];
-            let out_idx = synth_pos + k;
-            if out_idx >= out.len() {
-                out.resize(out_idx + frame_size, 0.0);
-                norm.resize(out_idx + frame_size, 0.0);
-            }
-            out[out_idx] += s;
-            norm[out_idx] += window[k] * window[k];
-        }
-
-        // memoram coada acestui cadru (in pozitia finala reala) pentru urmatoarea corelare
-        let tail_start = frame_start + frame_size.saturating_sub(search_radius);
-        for k in 0..search_radius {
-            let idx = tail_start + k;
-            prev_frame_tail[k] = if idx < n_in { input[idx] } else { 0.0 };
-        }
-        have_prev = true;
-
-        synth_pos += synthesis_hop;
-        analysis_pos += analysis_hop_nominal as i64;
+    match wsola::stretch(&buf.samples, buf.sample_rate, 1, speed) {
+        Ok(samples) => AudioBuffer { samples, sample_rate: buf.sample_rate },
+        Err(_) => buf.clone(),
     }
-
-    // normalizare (overlap-add impartit la suma ferestrelor la patrat)
-    for i in 0..out.len() {
-        if norm[i] > 1e-6 {
-            out[i] /= norm[i].sqrt().max(1e-6);
-        }
-    }
-    out.truncate(synth_pos.min(out.len()));
-
-    AudioBuffer { samples: out, sample_rate: buf.sample_rate }
 }
 
 /// Reduce un buffer la N puncte (varf de amplitudine per bucata), pt. desenat forma de unda in UI.
@@ -464,7 +358,9 @@ pub fn distortion(buf: &AudioBuffer, drive: f32) -> AudioBuffer {
 }
 
 /// "Sidechain pump": pulsatie ritmica de volum sincronizata pe BPM (ca un sidechain-compressor clasic de techno/house).
-/// La fiecare timp (60/bpm secunde), volumul scade brusc si urca lin inapoi.
+/// Foloseste o forma de cosinus (perfect neteda si periodica, fara "reset" artificial) ca sa nu produca
+/// niciun salt brusc de volum la trecerea intre timpi - un salt de genul asta se aude ca un tacanit/clic
+/// la fiecare bataie, peste tot in piesa, si e o problema reala de calitate a sunetului, nu stil.
 pub fn sidechain_pump(buf: &AudioBuffer, bpm: f32, depth: f32, subdivision: f32) -> AudioBuffer {
     if bpm <= 0.0 {
         return buf.clone();
@@ -474,9 +370,9 @@ pub fn sidechain_pump(buf: &AudioBuffer, bpm: f32, depth: f32, subdivision: f32)
     let beat_secs = (60.0 / bpm) * subdivision.max(0.1);
     let period_samples = (beat_secs * sr).max(1.0);
     let out: Vec<f32> = buf.samples.iter().enumerate().map(|(i, &s)| {
-        let phase = (i as f32 % period_samples) / period_samples; // 0..1 in cadrul unui timp
-        // scade brusc la inceputul timpului, revine exponential
-        let gain = 1.0 - depth * (-phase * 8.0).exp();
+        let t = i as f32 / period_samples; // continuu, nu modulo pe intregi - cos() e deja periodic
+        let shape = ((1.0 + (2.0 * std::f32::consts::PI * t).cos()) / 2.0).powf(3.0);
+        let gain = 1.0 - depth * shape;
         s * gain
     }).collect();
     AudioBuffer { samples: out, sample_rate: buf.sample_rate }

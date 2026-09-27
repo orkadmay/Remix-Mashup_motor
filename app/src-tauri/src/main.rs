@@ -121,6 +121,7 @@ fn build_segment_mashup(
     segments: Vec<SegmentSpec>,
     target_bpm: Option<f32>,
     seam_crossfade_secs: Option<f32>,
+    effects: Option<PostEffects>,
 ) -> Result<AudioResult, String> {
     if segments.is_empty() {
         return Err("adauga cel putin o bucata inainte de a construi mashup-ul".to_string());
@@ -168,6 +169,7 @@ fn build_segment_mashup(
     }
 
     let out = splice_segments(&aligned_segments, seam_crossfade_secs.unwrap_or(0.15));
+    let out = apply_post_effects(out, &effects.unwrap_or_default(), resolved_target);
     write_result(&out, "mashup-segmente", resolved_target)
 }
 
@@ -203,6 +205,7 @@ fn auto_mashup(
     phrase_beats: Option<f32>,
     segments_per_track: Option<usize>,
     seam_crossfade_secs: Option<f32>,
+    effects: Option<PostEffects>,
 ) -> Result<AutoMashupResult, String> {
     let a = load_cached(&path_a)?;
     let b = load_cached(&path_b)?;
@@ -260,6 +263,7 @@ fn auto_mashup(
     }
 
     let out = splice_segments(&aligned_segments, seam_crossfade_secs.unwrap_or(0.2));
+    let out = apply_post_effects(out, &effects.unwrap_or_default(), target);
     let result = write_result(&out, "auto-mashup", target)?;
 
     Ok(AutoMashupResult {
@@ -272,10 +276,11 @@ fn auto_mashup(
     })
 }
 
-/// Efecte optionale de remix, aplicate pe o singura piesa.
-#[derive(Deserialize, Default)]
+/// Efecte optionale de post-procesare (stiluri + descriere + ecou/stutter), aplicate
+/// dupa ce sunetul de baza (remix sau mashup) e deja gata.
+#[derive(Deserialize, Default, Clone)]
 #[serde(rename_all = "camelCase")]
-struct RemixEffects {
+struct PostEffects {
     styles: Option<Vec<String>>,
     custom_description: Option<String>,
     echo_delay_secs: Option<f32>,
@@ -285,19 +290,7 @@ struct RemixEffects {
     stutter_repeats: Option<usize>,
 }
 
-/// Lista de stiluri disponibile (id + nume prietenos), pt. afisare in interfata.
-#[tauri::command]
-fn list_styles() -> Vec<(String, String)> {
-    style_list().into_iter().map(|(id, name)| (id.to_string(), name.to_string())).collect()
-}
-
-/// Remix pe o singura piesa: aplica (in ordinea asta) stilurile alese, o descriere text
-/// (recunoastere de cuvinte cheie), apoi ecou si/sau stutter, daca sunt cerute.
-#[tauri::command]
-fn remix_track(path: String, bpm_override: Option<f32>, effects: RemixEffects) -> Result<AudioResult, String> {
-    let buf = load_cached(&path)?;
-    let bpm = bpm_override.unwrap_or_else(|| detect_bpm(&buf, 60.0, 200.0));
-
+fn apply_post_effects(buf: AudioBuffer, effects: &PostEffects, bpm: f32) -> AudioBuffer {
     let mut out = buf;
     if let Some(styles) = effects.styles.as_ref() {
         if !styles.is_empty() {
@@ -315,7 +308,22 @@ fn remix_track(path: String, bpm_override: Option<f32>, effects: RemixEffects) -
     if let Some(chunk) = effects.stutter_chunk_secs {
         out = stutter(&out, chunk, effects.stutter_repeats.unwrap_or(2));
     }
+    out
+}
 
+/// Lista de stiluri disponibile (id + nume prietenos), pt. afisare in interfata.
+#[tauri::command]
+fn list_styles() -> Vec<(String, String)> {
+    style_list().into_iter().map(|(id, name)| (id.to_string(), name.to_string())).collect()
+}
+
+/// Remix pe o singura piesa: aplica (in ordinea asta) stilurile alese, o descriere text
+/// (recunoastere de cuvinte cheie), apoi ecou si/sau stutter, daca sunt cerute.
+#[tauri::command]
+fn remix_track(path: String, bpm_override: Option<f32>, effects: PostEffects) -> Result<AudioResult, String> {
+    let buf = load_cached(&path)?;
+    let bpm = bpm_override.unwrap_or_else(|| detect_bpm(&buf, 60.0, 200.0));
+    let out = apply_post_effects(buf, &effects, bpm);
     write_result(&out, "remix", bpm)
 }
 

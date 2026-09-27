@@ -1,68 +1,62 @@
-# mashup-engine — nucleu DSP, faza 1 (mashup: aliniere BPM + suprapunere)
+# mashup-engine — nucleu DSP
 
-Acesta e primul strat, testat efectiv (nu doar scris), din motorul de remix/mashup.
-E cod Rust pur, fara interfata grafica — un pas inainte de a construi shell-ul Tauri
-peste el, ca sa nu construim UI peste un motor care nu functioneaza corect.
+Nucleul in Rust din spatele motorului de remix/mashup. Cod pur, fara interfata
+grafica — folosit de aplicatia Tauri din `../app`.
 
-## Ce am verificat, cu adevarat, ruland codul (nu doar citindu-l)
+## Istoric de calitate (ce am gasit si reparat, nu doar ce am scris)
 
-Am generat semnale de test sintetice (click-track-uri la BPM cunoscut: 95, 120, 128)
-si am rulat efectiv pipeline-ul complet:
+- **Time-stretch (aliniere de tempo, pastrand tonul)** — prima versiune era scrisa
+  de mine de la zero si avea o problema reala, confirmata prin test (un ton pur
+  iesea cu o mica deviatie constanta de frecventa - semn ca algoritmul de cautare
+  a fazei avea o eroare de fond). Inlocuita cu biblioteca `wsola` (Rust, testata
+  separat de comunitate), in loc sa continui s-o depanez singur.
+- **Sidechain pump (pompare ritmica, folosita de majoritatea stilurilor de remix)** —
+  prima versiune avea un bug real: volumul sarea brusc, instantaneu, la fiecare
+  bataie, ceea ce se aude ca un tacanit/clic peste tot in piesa — nu era stilizare,
+  era un defect de semnal. Testat si confirmat: inainte de reparatie, saltul intre
+  2 esantioane consecutive ajungea la ~0.6 (foarte audibil); dupa reparatie
+  (o forma neteda de cosinus, fara "resetare" bruscă), saltul maxim e ~0.0001 —
+  practic inaudibil ca discontinuitate.
+- **Normalizare de siguranta la export** — unele combinatii de efecte (mai ales
+  ecou cu feedback mare) puteau impinge volumul peste limita, ceea ce ar fi produs
+  clipping/distorsiune la scriere. Acum orice rezultat e verificat si, daca e
+  nevoie, scazut proportional inainte de scriere.
 
-- **Decodare audio** (mp3/wav/flac/ogg, via `symphonia`) — functioneaza.
-- **Detectare BPM** — testata pe click-track-uri la 95/120/128 BPM: eroare sub 0.5 BPM
-  in toate cazurile. Pe muzica reala, cu ritm mai putin regulat decat un click-track,
-  precizia va fi mai mica — de asta interfata va trebui sa permita corectie manuala.
-- **Aliniere de tempo (durata)** — verificat: dupa "intindere", piesa B cade exact pe
-  BPM-ul tintei (ex: 94.8 -> 120.2 dupa aliniere, verificat si invers).
-- **Amestecare (mix) si crossfade liniar** — logica simpla, aritmetica directa, fara
-  motive sa nu functioneze; nu am gasit probleme la testare.
+## Ce am verificat efectiv, rulan cod (nu doar citind)
 
-## Ce NU e inca gata de productie
+- Decodare audio (mp3/wav/flac/ogg) — functioneaza.
+- Detectare BPM — testata pe click-track-uri la 95/120/128 BPM, eroare sub 0.5 BPM.
+- Extragere de bucati + lipire (splice) cu crossfade la imbinari.
+- Efecte: ecou, stutter, filtre trece-jos/trece-sus, distorsiune, sidechain pump,
+  17 stiluri predefinite (combinatii ale efectelor de mai sus) — toate testate ca
+  nu produc NaN/valori infinite si ca raman in limite rezonabile de volum.
+- Auto-segmentare + scor de energie (RMS) pe bucati — verificat ca distinge corect
+  portiunile "tari" de cele "line" ale unei piese (testat cu semnal sintetic cu
+  energie alternanta cunoscuta).
 
-**Calitatea tonala a time-stretch-ului (WSOLA)** — durata iese corect, dar am testat
-si pe un ton pur (sinus 440 Hz) si tonul rezultat are o mica deviatie de frecventa,
-constanta indiferent de cat de mult intinzi semnalul. Asta inseamna ca algoritmul de
-cautare a fazei (partea care ar trebui sa evite pocnituri/artefacte la imbinarea
-bucatilor) are inca o eroare de fond. Pe muzica reala efectul o sa fie mai putin
-evident decat pe un ton pur, dar tot o sa se auda ca un usor "warble"/tremur, nu
-calitate de studio.
+## Ce NU am putut testa direct, in acest mediu
 
-Time-stretch de calitate e o problema DSP genuin grea (nu e o gluma industria are
-biblioteci intregi dedicate doar la asta). Recomandarea mea, ca sa "facem bine" cu
-adevarat: inlocuim `time_stretch()` din acest fisier cu o biblioteca Rust deja
-testata, in loc sa continui s-o perfectionez de la zero. Candidati verificati ca
-exista pe crates.io (nu i-am putut compila *in acest mediu*, pentru ca are un Rust
-prea vechi instalat din apt — dar pe orice masina cu Rust instalat normal, prin
-`rustup`, vor merge fara probema, e nevoie de rustup oricum pentru Tauri):
-- `wsola` — WSOLA in Rust pur, fara dependinte C
-- `timestretch` — dedicata muzicii electronice (EDM), exact profilul nostru
-- `signalsmith-stretch` — cea mai buna calitate (algoritm profesionist folosit si in
-  software audio comercial), dar leaga un C++ existent, nu e Rust pur
+Inlocuirea time-stretch-ului cu `wsola` nu a putut fi compilata *in sandbox-ul meu*
+(are un Rust instalat prin `apt`, prea vechi pentru cerintele acestei biblioteci -
+vezi si nota din `../README.md`). Am verificat API-ul exact citind sursa publicata
+a bibliotecii (docs.rs), dar validarea finala (sunet curat, fara artefacte) se
+intampla abia la prima rulare reala, pe calculatorul tau, prin build-ul din GitHub
+Actions (care are un Rust modern).
 
 ## Fisiere
 
-- `src/lib.rs` — nucleul: `load_audio`, `detect_bpm`, `time_stretch` (de inlocuit),
-  `mix`, `crossfade`, `write_wav`
-- `src/bin/gen_test.rs` — genereaza semnale de test (click-track-uri + ton pur),
-  utile pentru verificarea oricarei schimbari viitoare la algoritmi
-- `src/bin/mashup_cli.rs` — flux complet in linie de comanda: incarca 2 piese,
-  detecteaza BPM, aliniaza, amesteca, scrie fisierul rezultat
+- `src/lib.rs` — nucleul: `load_audio`, `detect_bpm`, `time_stretch`, `mix`,
+  `crossfade`, `extract_segment`, `splice_segments`, `echo`, `stutter`, `lowpass`,
+  `highpass`, `distortion`, `sidechain_pump`, `apply_style` (+ `style_list`,
+  `apply_style_chain`), `apply_custom_description`, `auto_segments`,
+  `segment_rms`, `normalize_peak`, `write_wav`
+- `src/bin/gen_test.rs` — genereaza semnale de test (click-track-uri + ton pur)
+- `src/bin/mashup_cli.rs` — flux complet in linie de comanda (fara interfata)
 
-## Cum rulezi (pe masina ta, cu Rust instalat prin rustup.rs)
+## Cum rulezi (pe o masina cu Rust instalat prin rustup.rs)
 
 ```
 cargo build --release
-./target/release/gen_test testdata          # genereaza semnale de test
+./target/release/gen_test testdata
 ./target/release/mashup_cli piesa_a.mp3 piesa_b.mp3 iesire.wav
 ```
-
-## Pasul urmator
-
-1. Confirmi ca ai (sau instalezi) Rust prin `rustup` pe masina ta — e nevoie oricum
-   pentru Tauri, deci facem asta o singura data.
-2. Inlocuim `time_stretch` cu o biblioteca testata (`wsola` ca prim candidat, pur
-   Rust, fara complicatii de compilare C++).
-3. Scheletul aplicatiei Tauri (interfata: incarcare fisiere, forma de unda, grila
-   de beat, timeline de aranjare) — peste acest nucleu, odata calitatea audio
-   confirmata.

@@ -19,8 +19,10 @@ path = "src/bin/mashup_cli.rs"
 symphonia = { version = "0.5", features = ["mp3", "wav", "flac", "ogg", "vorbis"] }
 hound = "3.5"
 rustfft = "6.2"
+wsola = "0.1"
 
 [profile.release]
 opt-level = 3
+
 
 
